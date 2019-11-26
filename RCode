@@ -1,0 +1,667 @@
+library(dplyr)
+library(tidyr)
+library(padr)
+library(reshape2)
+library(smooth)
+library(forecast)
+library(tstools)
+library(thief)										
+library(tsintermittent)
+library(nnfor)
+library(stringr)
+library(padr)
+library(nnfor)
+library(pracma)
+library(zoo)
+
+# THIS ONE INCLUDES CES #PROBLEM WITH LESS DATA POINTS
+# ALSO INCLUDES MIN, MA3, MA5, MA8, STLF, TBATS
+#IMPORT
+df=read.csv("Accessory_AMS.csv")
+str(df)
+#drop SHIP-CRD and PLATFORM
+df[,2] <- NULL
+df[,2] <- NULL
+
+#FACTOR TO NUMERIC, BLANKS TO NA,REMOVES 1ST COLUMN AUTOMATICALLY
+#df1 = as.data.frame(apply(df[2:ncol(df)], 2, function(x) {
+ # y = str_replace_all(x[], ",", "") #remove commas
+  #return(as.numeric(y)) #then convert
+#}))
+#ATTACHING THE PRIMARY BASE PRODUCT COLUMN AGAIN to DF1
+#df1_full = cbind(df[,1],df1)
+names(df)[1]  <- "Accessory"
+n1 = ncol(df)
+#REMOVING ROWS WITH ALL NA AND REMOVING ROWS WITH ALL NAs EXCEPT 10 (I.E., 10 DATAPOINTs)
+df1 = df[rowSums(is.na(df[,2:n1])) < n1-12, ]
+#FILTER ALL ROWS WITH ONLY NA AND CSV IT
+df2_na = anti_join(df,df1,by = "Accessory")
+write.table(df2_na, file = "Acc_All_nan_AMS.csv",sep=",",row.names=FALSE)
+#CONVERT ALL NAs to ZEROES
+df1= df1 %>% fill_by_value(value=0)
+#Create PRE-MATRIX DATAFRAME
+#DROPPING COLUMN 1 FROM FILTERED Dataframe
+df1_mat_full = as.matrix(df1)
+df1_mat=df1[,2:ncol(df1)]
+
+#RESHAPING THE DF AND ARRANGING by CONVERTING IT INTO A MATRIX
+df2m = as.matrix(df1_mat)
+df2mt = t(df2m)
+h=4
+n = nrow(df2mt) #Number of Time Periods
+c = ncol(df2mt) #Number of SKUs
+
+## OUTLIER DETECTION AND REMOVAL
+#for(i in (1:ncol(df2mt)))
+#{
+ # outliers=round(boxplot(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i],plot = FALSE)$out)
+  #df2mt[,i] = replace(df2mt[,i], df2mt[,i]== outliers, mean(df2mt[,i]))
+#}
+
+##########   CREATE MATRICES  ################
+f_ar = matrix(nrow = h, ncol = c)
+f_naive = matrix(nrow = h, ncol = c)
+f_ets = matrix(nrow = h, ncol = c)
+f_crost = matrix(nrow = h, ncol = c)
+f_mean  = matrix(nrow = h, ncol = c)
+f_rwf = matrix(nrow = h, ncol = c)
+f_holt = matrix(nrow = h, ncol = c)
+f_ses = matrix(nrow = h, ncol = c)
+f_thetaf =matrix(nrow = h, ncol = c)
+f_rep1 = matrix(nrow = h, ncol = c)
+f_rep2 = matrix(nrow = h, ncol = c)
+f_sba = matrix(nrow = h, ncol = c)
+f_tsb = matrix(nrow = h, ncol = c)
+f_med = matrix(nrow = h, ncol = c)
+#f_ces = matrix(nrow = h, ncol = c)
+#f_min = matrix(nrow = h, ncol = c)
+f_ma3 = matrix(nrow = h, ncol = c)
+f_ma5 = matrix(nrow = h, ncol = c)
+f_ma8 = matrix(nrow = h, ncol = c)
+f_stlf = matrix(nrow = h,ncol = c)
+f_tbats = matrix(nrow = h,ncol = c)
+f_snaive = matrix(nrow = h,ncol = c)
+f_nnetar = matrix(nrow = h, ncol = c)
+f_snaive6 = matrix(nrow = h,ncol = c)
+
+
+############ Ignore 0s before the start of the time series & then FORECAST #######################
+for (i in 1:c) {
+  f_ar[,i] = round(forecast(auto.arima(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i], seasonal=TRUE), h=h)$mean)
+  f_ets[,i] = round(forecast(ets(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i], frequency=6), model="ZZZ"),h=h)$mean)
+  f_crost[,i] = round(croston(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i],frequency=6),h=h)$mean)
+  f_mean[,i] = round(meanf(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i],h)$mean)
+  f_rwf[,i] = round(rwf(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i],h, drift=TRUE)$mean)
+  f_holt[,i]= round(forecast(holt(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i], frequency=6),h=h))$mean)
+  f_ses[,i]= round(forecast(ses(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i], frequency=6),h=h))$mean)
+  f_thetaf[,i]= round(thetaf(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i], frequency=6),h=h)$mean)
+  f_rep1[,i] = rep_len(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i],h)
+  f_rep2[,i] = rep(df2mt[n-12,i],h) #freq=3
+  f_sba[,i] = round(crost(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i], frequency=6),h=h,type="sba")$frc.out)
+  f_tsb[,i] = round(tsb(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i], frequency=6),h=h)$frc.out)
+  f_med[,i] = rep(median(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i]),h)
+  #f_ces[,i] = round(forecast(auto.ces(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i]), h=h)$mean)
+  #f_min[,i] = rep(min(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i]),h)
+  f_ma3[,i] = round(forecast(rollmean(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i], 3, align="center"),h=h)$mean)
+  f_ma5[,i] = round(forecast(rollmean(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i], 5, align="center"),h=h)$mean)
+  f_ma8[,i] = round(forecast(rollmean(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i], 8, align="center"),h=h)$mean)
+  f_stlf[,i] = round(stlf(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i], frequency=3),biasadj=TRUE, h=h)$mean)
+  f_tbats[,i]= round(forecast(tbats(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i], frequency=6)),h=h)$mean)
+  f_naive[,i] = naive(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i],frequency = 6), h=h)$mean
+  f_snaive[,i] = snaive(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i],frequency=6),h=h)$mean
+  f_nnetar[,i] = round(forecast(nnetar(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i],frequency=6)),h=h)$mean)
+
+}
+
+f_ar[f_ar<0] <- 0
+f_ets[f_ets<0] <- 0
+f_crost[f_crost<0] <- 0
+f_mean[f_mean<0] <- 0
+f_rwf[f_rwf<0] <- 0
+f_holt[f_holt<0] <- 0
+f_ses[f_ses<0] <- 0
+f_thetaf[f_thetaf<0] <- 0 
+f_sba[f_sba<0] <- 0
+f_tsb[f_tsb<0] <- 0
+f_stlf[f_stlf<0] <- 0
+f_tbats[f_tbats<0] <- 0
+f_snaive[f_snaive<0] <- 0
+f_nnetar[f_nnetar<0] <- 0
+
+f_combo = matrix(nrow=h, ncol = c)
+for (i in 1:c)
+{
+  for (j in 1:h)
+    
+  {
+    f_combo[j,i] = round((f_ar[j,i] + f_ets[j,i]+ f_crost[j,i] + f_mean[j,i] +
+                            f_rwf[j,i] + f_holt[j,i] + f_ses[j,i] + f_thetaf[j,i] + f_rep1[j,i] + 
+                            f_rep2[j,i] +f_sba[j,i] + f_tsb[j,i] +f_med[j,i] + f_ma3[j,i] +
+                            f_ma5[j,i] + f_ma8[j,i] + f_stlf[j,i] + f_tbats[j,i] + f_naive[j,i] +
+                            f_snaive[j,i] +f_nnetar[j,i])/21);
+  }
+}
+
+
+############## FINDING ACCURACY #####################
+acc_ar = matrix(nrow = c, ncol = 5)
+acc_naive = matrix(nrow = c, ncol = 5)
+acc_ets = matrix(nrow = c, ncol = 5)
+acc_crost = matrix(nrow = c, ncol = 5)
+acc_mean = matrix(nrow = c, ncol = 5)
+acc_rwf = matrix(nrow = c, ncol = 5)
+acc_holt = matrix(nrow = c, ncol = 5)
+acc_ses = matrix(nrow = c, ncol = 5)
+acc_thetaf = matrix(nrow = c, ncol = 5)
+acc_rep1 = matrix(nrow = c, ncol = 5)
+acc_rep2 = matrix(nrow = c, ncol = 5)
+acc_sba = matrix(nrow = c, ncol = 5)
+acc_tsb = matrix(nrow = c, ncol = 5)
+acc_med = matrix(nrow = c, ncol = 5)
+#acc_ces = matrix(nrow = c, ncol = 5)
+#acc_min = matrix(nrow = c, ncol = 5)
+acc_ma3 = matrix(nrow = c, ncol = 5)
+acc_ma5 = matrix(nrow = c, ncol = 5)
+acc_ma8 = matrix(nrow = c, ncol = 5)
+acc_stlf = matrix(nrow = c, ncol = 5)
+acc_tbats = matrix(nrow = c, ncol = 5)
+acc_snaive =  matrix(nrow = c,ncol = 5)
+acc_nnetar =  matrix(nrow = c,ncol = 5)
+acc_combo =  matrix(nrow = c,ncol = 5)
+
+for (i in 1:c){										
+  acc_ar[i,] = accuracy (f_ar[,i],df2mt[(n-h+1):n,i])										
+  acc_naive[i,]  = accuracy (f_naive[,i],df2mt[(n-h+1):n,i])
+  acc_ets[i,]  = accuracy (f_ets[,i],df2mt[(n-h+1):n,i])
+  acc_crost[i,] = accuracy (f_crost[,i],df2mt[(n-h+1):n,i])
+  acc_mean[i,] = accuracy (f_mean[,i],df2mt[(n-h+1):n,i])
+  acc_rwf[i,] = accuracy (f_rwf[,i],df2mt[(n-h+1):n,i])
+  acc_holt[i,] = accuracy (f_holt[,i],df2mt[(n-h+1):n,i])
+  acc_ses[i,] = accuracy (f_ses[,i],df2mt[(n-h+1):n,i])
+  acc_thetaf[i,] = accuracy (f_thetaf[,i],df2mt[(n-h+1):n,i])
+  acc_rep1[i,] = accuracy (f_rep1[,i],df2mt[(n-h+1):n,i])
+  acc_rep2[i,] = accuracy (f_rep2[,i],df2mt[(n-h+1):n,i])
+  acc_sba[i,] = accuracy (f_sba[,i],df2mt[(n-h+1):n,i])
+  acc_tsb[i,] = accuracy (f_tsb[,i],df2mt[(n-h+1):n,i])
+  acc_med[i,] = accuracy(f_med[,i],df2mt[(n-h+1):n,i])
+  #acc_ces[i,] = accuracy(f_ces[,i],df2mt[(n-h+1):n,i])
+  #acc_min[i,] = accuracy(f_min[,i],df2mt[(n-h+1):n,i])
+  acc_ma3[i,] = accuracy(f_ma3[,i],df2mt[(n-h+1):n,i])
+  acc_ma5[i,] = accuracy(f_ma5[,i],df2mt[(n-h+1):n,i])
+  acc_ma8[i,] = accuracy(f_ma8[,i],df2mt[(n-h+1):n,i])
+  acc_stlf[i,] = accuracy(f_stlf[,i],df2mt[(n-h+1):n,i])
+  acc_tbats[i,] = accuracy(f_tbats[,i],df2mt[(n-h+1):n,i])
+  acc_snaive[i,] = accuracy(f_snaive[,i],df2mt[(n-h+1):n,i])
+  acc_nnetar[i,] = accuracy(f_nnetar[,i],df2mt[(n-h+1):n,i])
+  acc_combo[i,] = accuracy(f_combo[,i],df2mt[(n-h+1):n,i])
+  }		
+############## ATTACHING PRODUCT INFORMATION COLUMN ##########################
+acc_ar_full = (cbind(df1_mat_full[,1],acc_ar))
+acc_naive_full = (cbind(df1_mat_full[,1],acc_naive))
+acc_ets_full = (cbind(df1_mat_full[,1],acc_ets))
+acc_crost_full = (cbind(df1_mat_full[,1],acc_crost))
+acc_mean_full = (cbind(df1_mat_full[,1],acc_mean))
+acc_rwf_full = (cbind(df1_mat_full[,1],acc_rwf))
+acc_holt_full = (cbind(df1_mat_full[,1],acc_holt))
+acc_ses_full = (cbind(df1_mat_full[,1],acc_ses))
+acc_thetaf_full = (cbind(df1_mat_full[,1],acc_thetaf))
+acc_rep1_full = (cbind(df1_mat_full[,1],acc_rep1))
+acc_rep2_full = (cbind(df1_mat_full[,1],acc_rep2))
+acc_sba_full = (cbind(df1_mat_full[,1],acc_sba))
+acc_tsb_full = (cbind(df1_mat_full[,1],acc_tsb))
+acc_med_full = (cbind(df1_mat_full[,1],acc_med))
+#acc_ces_full = (cbind(df1_mat_full[,1],acc_ces))
+#acc_min_full = (cbind(df1_mat_full[,1],acc_min))
+acc_ma3_full = (cbind(df1_mat_full[,1],acc_ma3))
+acc_ma5_full = (cbind(df1_mat_full[,1],acc_ma5))
+acc_ma8_full = (cbind(df1_mat_full[,1],acc_ma8))
+acc_stlf_full = (cbind(df1_mat_full[,1],acc_stlf))
+acc_tbats_full = (cbind(df1_mat_full[,1],acc_tbats))
+acc_snaive_full = (cbind(df1_mat_full[,1],acc_snaive))
+acc_nnetar_full = (cbind(df1_mat_full[,1],acc_nnetar))
+acc_combo_full = (cbind(df1_mat_full[,1],acc_combo))
+
+colnames(acc_ar_full) <- c("Primary.Base.Product","ME","RMSE","MAE","MPE","MAPE")
+colnames(acc_naive_full) = c("Primary.Base.Product","ME","RMSE","MAE","MPE","MAPE")
+colnames(acc_ets_full) = c("Primary.Base.Product","ME","RMSE","MAE","MPE","MAPE")
+colnames(acc_crost_full) = c("Primary.Base.Product","ME","RMSE","MAE","MPE","MAPE")
+colnames(acc_mean_full) = c("Primary.Base.Product","ME","RMSE","MAE","MPE","MAPE")
+colnames(acc_rwf_full) = c("Primary.Base.Product","ME","RMSE","MAE","MPE","MAPE")
+colnames(acc_holt_full) = c("Primary.Base.Product","ME","RMSE","MAE","MPE","MAPE")
+colnames(acc_ses_full) = c("Primary.Base.Product","ME","RMSE","MAE","MPE","MAPE")
+colnames(acc_thetaf_full) = c("Primary.Base.Product","ME","RMSE","MAE","MPE","MAPE")
+colnames(acc_rep1_full) = c("Primary.Base.Product","ME","RMSE","MAE","MPE","MAPE")
+colnames(acc_rep2_full) = c("Primary.Base.Product","ME","RMSE","MAE","MPE","MAPE")
+colnames(acc_sba_full) = c("Primary.Base.Product","ME","RMSE","MAE","MPE","MAPE")
+colnames(acc_tsb_full) = c("Primary.Base.Product","ME","RMSE","MAE","MPE","MAPE")
+colnames(acc_med_full) = c("Primary.Base.Product","ME","RMSE","MAE","MPE","MAPE")
+#colnames(acc_ces_full) = c("Primary.Base.Product","ME","RMSE","MAE","MPE","MAPE")
+#colnames(acc_min_full) = c("Primary.Base.Product","ME","RMSE","MAE","MPE","MAPE")
+colnames(acc_ma3_full) = c("Primary.Base.Product","ME","RMSE","MAE","MPE","MAPE")
+colnames(acc_ma5_full) = c("Primary.Base.Product","ME","RMSE","MAE","MPE","MAPE")
+colnames(acc_ma8_full) = c("Primary.Base.Product","ME","RMSE","MAE","MPE","MAPE")
+colnames(acc_stlf_full) = c("Primary.Base.Product","ME","RMSE","MAE","MPE","MAPE")
+colnames(acc_tbats_full) = c("Primary.Base.Product","ME","RMSE","MAE","MPE","MAPE")
+colnames(acc_snaive_full) = c("Primary.Base.Product","ME","RMSE","MAE","MPE","MAPE")
+colnames(acc_nnetar_full) = c("Primary.Base.Product","ME","RMSE","MAE","MPE","MAPE")
+colnames(acc_combo_full) = c("Primary.Base.Product","ME","RMSE","MAE","MPE","MAPE")
+############################ EXPORT AND THEN IMPORT AS DATAFRAME #############################
+write.table(acc_ar_full, file = "ARIMA_MC_F7_AMS.csv", sep=",",row.names = FALSE)
+write.table(acc_naive_full, file = "NAIVE_MC_F7_AMS.csv", sep=",",row.names = FALSE)
+write.table(acc_ets_full, file = "ETS_MC_F7_AMS.csv", sep=",",row.names = FALSE)
+write.table(acc_crost_full, file = "CROST_MC_F7_AMS.csv", sep=",",row.names = FALSE)
+write.table(acc_mean_full, file = "MEAN_MC_F7_AMS.csv", sep=",",row.names = FALSE)
+write.table(acc_rwf_full, file = "RWF_MC_F7_AMS.csv", sep=",",row.names = FALSE)
+write.table(acc_holt_full, file = "HOLT_MC_F7_AMS.csv", sep=",",row.names = FALSE)
+write.table(acc_ses_full, file = "SES_MC_F7_AMS.csv", sep=",",row.names = FALSE)
+write.table(acc_thetaf_full, file = "THETAF_MC_F7_AMS.csv", sep=",",row.names = FALSE)
+write.table(acc_rep1_full, file = "REP1_MC_F7_AMS.csv", sep=",",row.names = FALSE)
+write.table(acc_rep2_full, file = "REP2_MC_F7_AMS.csv", sep=",",row.names = FALSE)
+write.table(acc_sba_full, file = "SBA_MC_F7_AMS.csv", sep=",",row.names = FALSE)
+write.table(acc_tsb_full, file = "TSB_MC_F7_AMS.csv", sep=",",row.names = FALSE)
+write.table(acc_med_full, file = "MED_MC_F7_AMS.csv", sep=",",row.names = FALSE)
+#write.table(acc_ces_full, file = "CES_MC_F7_AMS.csv", sep=",",row.names = FALSE)
+#write.table(acc_min_full, file = "MIN_MC_F7_AMS.csv", sep=",",row.names = FALSE)
+write.table(acc_ma3_full, file = "MA3_MC_F7_AMS.csv", sep=",",row.names = FALSE)
+write.table(acc_ma5_full, file = "MA5_MC_F7_AMS.csv", sep=",",row.names = FALSE)
+write.table(acc_ma8_full, file = "MA8_MC_F7_AMS.csv", sep=",",row.names = FALSE)
+write.table(acc_stlf_full, file = "STLF_MC_F7_AMS.csv", sep=",",row.names = FALSE)
+write.table(acc_tbats_full, file = "TBATS_MC_F7_AMS.csv", sep=",",row.names = FALSE)
+write.table(acc_snaive_full, file = "SNAIVE_MC_F7_AMS.csv", sep=",",row.names = FALSE)
+write.table(acc_nnetar_full, file = "NNETAR_MC_F7_AMS.csv", sep=",",row.names = FALSE)
+write.table(acc_combo_full, file = "COMBO_MC_F7_AMS.csv", sep=",",row.names = FALSE)
+
+acc_ar_full_df = as.data.frame(read.csv("ARIMA_MC_F7_AMS.csv"))
+acc_naive_full_df = as.data.frame(read.csv("NAIVE_MC_F7_AMS.csv"))
+acc_ets_full_df = as.data.frame(read.csv("ETS_MC_F7_AMS.csv"))
+acc_crost_full_df = as.data.frame(read.csv("CROST_MC_F7_AMS.csv"))
+acc_mean_full_df = as.data.frame(read.csv("MEAN_MC_F7_AMS.csv"))
+acc_rwf_full_df = as.data.frame(read.csv("RWF_MC_F7_AMS.csv"))
+acc_holt_full_df = as.data.frame(read.csv("HOLT_MC_F7_AMS.csv"))
+acc_ses_full_df = as.data.frame(read.csv("SES_MC_F7_AMS.csv"))
+acc_thetaf_full_df = as.data.frame(read.csv("THETAF_MC_F7_AMS.csv"))
+acc_rep1_full_df = as.data.frame(read.csv("REP1_MC_F7_AMS.csv"))
+acc_rep2_full_df = as.data.frame(read.csv("REP2_MC_F7_AMS.csv"))
+acc_sba_full_df = as.data.frame(read.csv("SBA_MC_F7_AMS.csv"))
+acc_tsb_full_df = as.data.frame(read.csv("TSB_MC_F7_AMS.csv"))
+acc_med_full_df = as.data.frame(read.csv("MED_MC_F7_AMS.csv"))
+#acc_ces_full_df = as.data.frame(read.csv("CES_MC_F7_AMS.csv"))
+#acc_min_full_df = as.data.frame(read.csv("MIN_MC_F7_AMS.csv"))
+acc_ma3_full_df = as.data.frame(read.csv("MA3_MC_F7_AMS.csv"))
+acc_ma5_full_df = as.data.frame(read.csv("MA5_MC_F7_AMS.csv"))
+acc_ma8_full_df = as.data.frame(read.csv("MA8_MC_F7_AMS.csv"))
+acc_stlf_full_df = as.data.frame(read.csv("STLF_MC_F7_AMS.csv"))
+acc_tbats_full_df = as.data.frame(read.csv("TBATS_MC_F7_AMS.csv"))
+acc_snaive_full_df = as.data.frame(read.csv("SNAIVE_MC_F7_AMS.csv"))
+acc_nnetar_full_df = as.data.frame(read.csv("NNETAR_MC_F7_AMS.csv"))
+acc_combo_full_df = as.data.frame(read.csv("COMBO_MC_F7_AMS.csv"))
+
+
+acc_all_MAPE = data.frame(cbind(acc_ar_full_df$MAPE,acc_naive_full_df$MAPE,acc_ets_full_df$MAPE,acc_crost_full_df$MAPE,acc_mean_full_df$MAPE,
+                                acc_rwf_full_df$MAPE, acc_holt_full_df$MAPE, acc_ses_full_df$MAPE, acc_thetaf_full_df$MAPE,acc_rep1_full_df$MAPE,acc_rep2_full_df$MAPE,
+                                acc_sba_full_df$MAPE,acc_tsb_full_df$MAPE,acc_med_full_df$MAPE, acc_ma3_full_df$MAPE, acc_ma5_full_df$MAPE,acc_ma8_full_df$MAPE,acc_stlf_full_df$MAPE,acc_tbats_full_df$MAPE,
+                                acc_snaive_full_df$MAPE,  acc_nnetar_full_df$MAPE, acc_combo_full_df$MAPE ))
+colnames(acc_all_MAPE) <- c("ARIMA","NAIVE","ETS","CROST","MEAN","RWF","HOLT","SES","THETAF","REP1","REP2","SBA","TSB","MEDIAN", "MA3","MA5","MA8","STLF","TBATS", "SNAIVE","NNETAR","COMBO")
+acc_all_MAPE = cbind(acc_ar_full_df[,1],acc_all_MAPE)
+names(acc_all_MAPE)[1] <- "Primary.Base.Product"
+acc_all_MAPE1= acc_all_MAPE %>% mutate(MinMAPE = pmin(ARIMA, NAIVE, ETS, CROST, MEAN, RWF, HOLT, SES, THETAF, REP1, REP2, SBA, TSB, MEDIAN, MA3, MA5, MA8, STLF,TBATS, SNAIVE, NNETAR, COMBO))
+#Find out the best method!
+Method= colnames(acc_all_MAPE)[apply(acc_all_MAPE,1,which.min)]
+#Attach the Method COLUMN with this column
+acc_all_MAPE2= cbind(acc_all_MAPE1,Method)
+table(acc_all_MAPE2$Method)
+write.table(acc_all_MAPE2, file = "Accuracy_all_MAPE_AMS_NOV.csv", sep=",",row.names = FALSE)
+
+
+
+########################################################################################################################
+
+hurstexp(df2mt[,66])
+
+f_all = matrix(nrow = h, ncol = c)
+nc= nrow(acc_all_MAPE2)
+meth_col = ncol(acc_all_MAPE2)
+
+# FORECAST H STEPS FOR INSAMPLE ACCURACY, WHERE H= 2 WITH OPTIMAL METHOD
+for (i in 1:nc) {
+  if (acc_all_MAPE2[i,meth_col]== "ARIMA") {
+    f_all[,i] = round(forecast(auto.arima(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i], seasonal=TRUE), h=h)$mean)
+  } else if (acc_all_MAPE2[i,meth_col] == "CROST") {
+    f_all[,i] = round(croston(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i],frequency=6),h=h)$mean)
+  } else if  
+  (acc_all_MAPE2[i,meth_col] == "ETS") { 
+    f_all[,i] = round(forecast(ets(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i], frequency=6), model="ZZZ"),h=h)$mean)
+  } else if 
+  (acc_all_MAPE2[i,meth_col] == "HOLT") {
+    f_all[,i] = round(forecast(holt(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i], frequency=6),h=h))$mean)
+  } else if 
+  (acc_all_MAPE2[i,meth_col] == "MEAN") {
+    f_all[,i] = round(meanf(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i],h)$mean)
+  } else if  
+  (acc_all_MAPE2[i,meth_col] == "NAIVE") {
+    f_all[,i] = naive(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i], frequency = 6), h=h)$mean
+  } else if 
+  (acc_all_MAPE2[i,meth_col] == "REP1") {
+    f_all[,i] = rep_len(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i],h)
+  } else if  
+  (acc_all_MAPE2[i,meth_col] == "REP2") {
+    f_all[,i] = rep(df2mt[n-3,i],h)
+  } else if 
+  (acc_all_MAPE2[i,meth_col] == "RWF") {
+    f_all[,i] = round(rwf(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i],h, drift=TRUE)$mean)
+  } else if  
+  (acc_all_MAPE2[i,meth_col] == "SBA") {
+    f_all[,i] = round(crost(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i], frequency=6),h=h,type="sba")$frc.out)
+  } else if 
+  (acc_all_MAPE2[i,meth_col] == "SES") {
+    f_all[,i] = round(forecast(ses(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i], frequency=6),h=h))$mean)
+  } else if  
+  (acc_all_MAPE2[i,meth_col] == "THETAF") {
+    f_all[,i] = round(thetaf(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i], frequency=6),h=h)$mean)
+  }  else if
+  (acc_all_MAPE2[i,meth_col] == "TSB") {
+    f_all[,i] = round(tsb(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i], frequency=6),h=h)$frc.out)
+  } else if
+  (acc_all_MAPE2[i,meth_col] == "MEDIAN") {
+    f_all[,i] = rep(median(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i]),h)}
+  #else if
+  #(acc_all_MAPE2[i,meth_col] == "MIN") {
+   # f_all[,i] = rep(min(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i]),h)}
+  else if
+  (acc_all_MAPE2[i,meth_col] == "MA3") {
+    f_all[,i] = round(forecast(rollmean(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i], 3, align="center"),h=h)$mean)}
+  else if
+  (acc_all_MAPE2[i,meth_col] == "MA5") {
+    f_all[,i] = round(forecast(rollmean(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i], 5, align="center"),h=h)$mean)}
+  else if
+  (acc_all_MAPE2[i,meth_col] == "MA8") {
+    f_all[,i] = round(forecast(rollmean(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i], 8, align="center"),h=h)$mean)}
+  else if
+  (acc_all_MAPE2[i,meth_col] == "STLF") {
+    f_all[,i] = round(stlf(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i], frequency=3),biasadj=TRUE, h=h)$mean)}
+  else if
+  (acc_all_MAPE2[i,meth_col] == "TBATS") {
+    f_all[,i] = round(forecast(tbats(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i], frequency=3)),h=h)$mean)}
+  else if
+  (acc_all_MAPE2[i,meth_col] == "NNETAR") {
+    f_all[,i] = round(forecast(nnetar(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i],frequency=6)),h=h)$mean)}
+  else if
+  (acc_all_MAPE2[i,meth_col] == "SNAIVE") {
+    f_all[,i] = snaive(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i],frequency=3),h=h)$mean}
+  else if
+  (acc_all_MAPE2[i,meth_col] == "COMBO") {
+    for (j in 1:h)  {
+      f_all[j,i] = round((f_ar[j,i] + f_ets[j,i]+ f_crost[j,i] + f_mean[j,i] +
+                              f_rwf[j,i] + f_holt[j,i] + f_ses[j,i] + f_thetaf[j,i] + f_rep1[j,i] + 
+                              f_rep2[j,i] +f_sba[j,i] + f_tsb[j,i] +f_med[j,i] + f_ma3[j,i] +
+                              f_ma5[j,i] + f_ma8[j,i] + f_stlf[j,i] + f_tbats[j,i] + f_naive[j,i] +
+                              f_snaive[j,i] +f_nnetar[j,i])/21);  }
+    }
+    
+   }
+
+f_all_t = t(f_all)
+f_all_t = cbind(acc_tsb_full_df$Primary.Base.Product,data.frame(f_all_t)) 
+write.table(f_all_t, "R_3M_Forecast_AMS__NOV.csv", sep=",",row.names=FALSE)
+names(f_all_t)[1]<- "Primary.Base.Product"
+
+##################################################### GO TO FILE2 FOR STAT TRADE RELMAE ###################################
+f_stat = read.csv("Accessory_cons_AMS.csv", stringsAsFactors = FALSE)
+str(f_stat)
+#drop SHIP-CRD and PLATFORM
+f_stat[,2] <- NULL
+f_stat[,2] <- NULL
+#FACTOR TO NUMERIC, BLANKS TO NA,REMOVES 1ST COLUMN AUTOMATICALLY
+#f_stat1 = as.data.frame(apply(f_stat[2:ncol(f_stat)], 2, function(x) {
+ # y = str_replace_all(x[], ",", "") #remove commas
+  #return(as.numeric(y)) #then convert
+
+#}))
+#CONVERT ALL NAs to ZEROES
+f_stat1 = f_stat %>% fill_by_value(value=0)
+#Add Product Information
+#f_stat2 = cbind(f_stat[,1],f_stat1)
+colnames(f_stat1)[1] <- "Accessory"
+# COMPARING CONSENSUS FORECAST WITH SHIP CRD
+f1 = inner_join(f_stat1, df1,by="Accessory", stringsAsFactors = FALSE)
+f1m = as.matrix(f1[2:ncol(f1)])
+# CREATE MATRICES
+acc_cons = matrix(nrow=nrow(f1m), ncol = 7)
+acc_myf= matrix(nrow = c, ncol = 5)
+acc_relmae1 = matrix(nrow=c,ncol=1)
+colnames(acc_cons) = c("ME","RMSE","MAE","MPE","MAPE","ACF1","Theil's U" )
+colnames(acc_myf) = c("ME","RMSE","MAE","MPE","MAPE")
+for (i in 1: nrow(f1m))
+{
+  acc_cons[i,] = accuracy(tail(ts(f1m[i,1:38], frequency=3),h),tail(ts(f1m[i,39:ncol(f1m)], frequency=3),h))
+ # acc_myf[i,] = accuracy (f_all[,i],df2mt[(n-h+1):n,i])
+ # acc_relmae1[i,] = acc_myf[i,3]/acc_cons[i,3]
+}
+##accuracy(tail(ts(f1m[1,1:36], frequency=3),h),tail(ts(f1m[1,37:ncol(f1m)], frequency=3),h))
+###accuracy(ts(f1m[1,1:36], frequency=3),ts(f1m[1,37:ncol(f1m)], frequency=3))
+#for (i in 1:c){	
+#acc_all[i,] = accuracy (f_all[,i],df1mt[(n-h+1):n,i])	
+#acc_stat[i,] = accuracy (mstat_horizon[,i],df1mt[(n-h+1):n,i])	
+#}
+write.table(acc_cons, file="Cons_MAPE_AMS__NOV.csv", sep = ",", row.names = FALSE)
+
+#acc_df = data.frame(acc_relmae1)
+#acc_df1 = acc_df %>% mutate(Check = if_else(acc_relmae1<=1,"R Good","R Bad"))
+#table(acc_df1$Check)
+#write.table(acc_df1, file= "R_Forecast_RelMAE_AMS_cons.csv", sep = ",", row.names=FALSE)
+#acc_df2  =cbind(f1[,1],acc_df1)
+################### PLOT ##########################################
+colours <- c("#A7A7A7",             "dodgerblue",             "firebrick",             "forestgreen",             "gold")
+matplot(f1m[1,37:ncol(f1m)], ylim=c(0, 5000), type="l",lty = 1:5, ylab = "Units", xlab="Time", col = colours[1], main = "ShipCRD vs. Final Cons Fcst 2EH31A (R Bad) APJ")
+matlines (f1m[1,1:36], type = "l", lty = 1:5, col = colours[2])
+legend("topleft",legend= c("ShipCRD","Cons Fcst"), cex=0.7, lty=0.5, col = colours[1:2],lwd=2, pch=1)
+
+
+
+################################## 21 MONTHS COMBO #########################
+h_out=21
+##########   CREATE MATRICES  ################
+f1_ar = matrix(nrow = h_out, ncol = c)
+f1_naive = matrix(nrow = h_out, ncol = c)
+f1_ets = matrix(nrow = h_out, ncol = c)
+f1_crost = matrix(nrow = h_out, ncol = c)
+f1_mean  = matrix(nrow = h_out, ncol = c)
+f1_rwf = matrix(nrow = h_out, ncol = c)
+f1_holt = matrix(nrow = h_out, ncol = c)
+f1_ses = matrix(nrow = h_out, ncol = c)
+f1_thetaf =matrix(nrow = h_out, ncol = c)
+f1_rep1 = matrix(nrow = h_out, ncol = c)
+f1_rep2 = matrix(nrow = h_out, ncol = c)
+f1_sba = matrix(nrow = h_out, ncol = c)
+f1_tsb = matrix(nrow = h_out, ncol = c)
+f1_med = matrix(nrow = h_out, ncol = c)
+#f1_ces = matrix(nrow = h_out, ncol = c)
+#f1_min = matrix(nrow = h_out, ncol = c)
+f1_ma3 = matrix(nrow = h_out, ncol = c)
+f1_ma5 = matrix(nrow = h_out, ncol = c)
+f1_ma8 = matrix(nrow = h_out, ncol = c)
+f1_stlf = matrix(nrow = h_out,ncol = c)
+f1_tbats = matrix(nrow = h_out,ncol = c)
+f1_snaive = matrix(nrow = h_out,ncol = c)
+f1_nnetar = matrix(nrow = h_out, ncol = c)
+f1_snaive6 = matrix(nrow = h_out,ncol = c)
+
+
+############ Ignore 0s before the start of the time series & then FORECAST #######################
+for (i in 1:c) {
+  f1_ar[,i] = round(forecast(auto.arima(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i], seasonal=TRUE), h=h_out)$mean)
+  f1_ets[,i] = round(forecast(ets(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i], frequency=6), model="ZZZ"),h=h_out)$mean)
+  f1_crost[,i] = round(croston(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i],frequency=6),h=h_out)$mean)
+  f1_mean[,i] = round(meanf(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i],h_out)$mean)
+  f1_rwf[,i] = round(rwf(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i],h_out, drift=TRUE)$mean)
+  f1_holt[,i]= round(forecast(holt(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i], frequency=6),h=h_out))$mean)
+  f1_ses[,i]= round(forecast(ses(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i], frequency=6),h=h_out))$mean)
+  f1_thetaf[,i]= round(thetaf(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i], frequency=6),h=h_out)$mean)
+  f1_rep1[,i] = rep_len(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i],h_out)
+  f1_rep2[,i] = rep(df2mt[n-3,i],h_out) #freq=3
+  f1_sba[,i] = round(crost(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i], frequency=6),h=h_out,type="sba")$frc.out)
+  f1_tsb[,i] = round(tsb(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i], frequency=6),h=h_out)$frc.out)
+  f1_med[,i] = rep(median(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i]),h_out)
+  #f1_ces[,i] = round(forecast(auto.ces(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i]), h=h)$mean)
+  #f1_min[,i] = rep(min(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])-h),i]),h)
+  f1_ma3[,i] = round(forecast(rollmean(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i], 3, align="center"),h=h_out)$mean)
+  f1_ma5[,i] = round(forecast(rollmean(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i], 5, align="center"),h=h_out)$mean)
+  f1_ma8[,i] = round(forecast(rollmean(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i], 8, align="center"),h=h_out)$mean)
+  f1_stlf[,i] = round(stlf(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i], frequency=3),biasadj=TRUE, h=h_out)$mean)
+  f1_tbats[,i]= round(forecast(tbats(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i], frequency=3)),h=h_out)$mean)
+  f1_naive[,i] = naive(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i],frequency = 6), h=h_out)$mean
+  f1_snaive[,i] = snaive(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i],frequency=3),h=h_out)$mean
+  f1_nnetar[,i] = round(forecast(nnetar(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i],frequency=6)),h=h_out)$mean)
+  
+}
+
+
+################################################ 21 MONTHS OUT FORECAST #################################
+
+h_out = 21
+
+f_all2 = matrix(nrow=h_out, ncol = c)
+# BUILD THE FINAL CODE
+for (i in 1:nc) {
+  if (acc_all_MAPE2[i,meth_col]== "ARIMA") {
+    f_all2[,i] = round(forecast(auto.arima(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i], seasonal=TRUE), h=h_out)$mean)
+  } else if (acc_all_MAPE2[i,meth_col] == "CROST") {
+    f_all2[,i] = round(croston(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i],frequency=6),h=h_out)$mean)
+  } else if  
+  (acc_all_MAPE2[i,meth_col] == "ETS") { 
+    f_all2[,i] = round(forecast(ets(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i], frequency=6), model="ZZZ"),h=h_out)$mean)
+  } else if 
+  (acc_all_MAPE2[i,meth_col] == "HOLT") {
+    f_all2[,i] = round(forecast(holt(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i], frequency=6),h=h_out))$mean)
+  } else if 
+  (acc_all_MAPE2[i,meth_col] == "MEAN") {
+    f_all2[,i] = round(meanf(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i],h_out)$mean)
+  } else if  
+  (acc_all_MAPE2[i,meth_col] == "NAIVE") {
+    f_all2[,i] = naive(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i], frequency = 6), h=h_out)$mean
+  } else if 
+  (acc_all_MAPE2[i,meth_col] == "REP1") {
+    f_all2[,i] = rep_len(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i],h_out)
+  } else if  
+  (acc_all_MAPE2[i,meth_col] == "REP2") {
+    f_all2[,i] = rep(df2mt[n-3,i],h_out)
+  } else if 
+  (acc_all_MAPE2[i,meth_col] == "RWF") {
+    f_all2[,i] = round(rwf(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i],h_out, drift=TRUE)$mean)
+  } else if  
+  (acc_all_MAPE2[i,meth_col] == "SBA") {
+    f_all2[,i] = round(crost(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i], frequency=6),h=h_out,type="sba")$frc.out)
+  } else if 
+  (acc_all_MAPE2[i,meth_col] == "SES") {
+    f_all2[,i] = round(forecast(ses(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i], frequency=6),h=h_out))$mean)
+  } else if  
+  (acc_all_MAPE2[i,meth_col] == "THETAF") {
+    f_all2[,i] = round(thetaf(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i], frequency=6),h=h_out)$mean)
+  }  else if
+  (acc_all_MAPE2[i,meth_col] == "TSB") {
+    f_all2[,i] = round(tsb(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i], frequency=6),h=h_out)$frc.out)
+  } else if
+  (acc_all_MAPE2[i,meth_col] == "MEDIAN") {
+    f_all2[,i] = round(rep(median(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i]),h_out))
+  }
+  #else if
+  #(acc_all_MAPE2[i,meth_col] == "MIN") {
+  #f_all2[,i] =  round(rep(min(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i]),h_out))}
+  else if
+  (acc_all_MAPE2[i,meth_col] == "MA3") {
+    f_all2[,i] = round(forecast(rollmean(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i], 3, align="center"),h=h_out)$mean)}
+  else if
+  (acc_all_MAPE2[i,meth_col] == "MA5") {
+    f_all2[,i] = round(forecast(rollmean(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i], 5, align="center"),h=h_out)$mean)}
+  else if
+  (acc_all_MAPE2[i,meth_col] == "MA8") {
+    f_all2[,i] = round(forecast(rollmean(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i], 8, align="center"),h=h_out)$mean)}
+  else if
+  (acc_all_MAPE2[i,meth_col] == "STLF") {
+    f_all2[,i] = round(stlf(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i], frequency=3),biasadj=TRUE, h=h_out)$mean)}
+  else if
+  (acc_all_MAPE2[i,meth_col] == "TBATS") {
+    f_all2[,i] = round(forecast(tbats(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i], frequency=3)),h=h_out)$mean)}
+  else if
+  (acc_all_MAPE2[i,meth_col] == "NNETAR") {
+    f_all2[,i] = round(forecast(nnetar(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i],frequency=6)),h=h_out)$mean)}
+  else if
+  (acc_all_MAPE2[i,meth_col] == "SNAIVE") {
+    f_all2[,i] = snaive(ts(df2mt[which.max(df2mt[,i] != 0):(length(df2mt[,i])),i],frequency=3),h=h_out)$mean}
+  else if
+  (acc_all_MAPE2[i,meth_col] == "COMBO") {
+    for (j in 1:h_out)  {
+      f_all2[j,i] = round((f1_ar[j,i] + f1_ets[j,i]+ f1_crost[j,i] + f1_mean[j,i] +
+                            f1_rwf[j,i] + f1_holt[j,i] + f1_ses[j,i] + f1_thetaf[j,i] + f1_rep1[j,i] + 
+                            f1_rep2[j,i] +f1_sba[j,i] + f1_tsb[j,i] +f1_med[j,i] + f1_ma3[j,i] +
+                            f1_ma5[j,i] + f1_ma8[j,i] + f1_stlf[j,i] + f1_tbats[j,i] + f1_naive[j,i] +
+                            f1_snaive[j,i] +f1_nnetar[j,i])/21);  }
+  } 
+  
+  }
+  
+
+f_all2[f_all2 <0] <- 0
+f_all2[f_all2 ==0] <- 1
+f_all2 = round(f_all2)
+f_all2_t = t(f_all2)
+f_all3 = cbind(acc_tsb_full_df$Primary.Base.Product,data.frame(f_all2_t))
+
+names(f_all3)[1] <- "Primary.Base.Product"
+
+write.table(f_all3, "R_21M_Forecast_AMS__NOV.csv", sep=",",row.names=FALSE)
+
+
+########################################WMAPE###############################
+
+stat = read.csv("Stat_fcst_AMS_NOV.csv")
+join1 = inner_join(f_all_t, stat, by="Primary.Base.Product")
+### IF H=4, THEN -3 #############
+stat_tail1= as.matrix(join1 [,(ncol(join1)-3):ncol(join1)])
+shipcrd_tail1 = df2m[,(ncol(df2m)-3):ncol(df2m)]
+rfcst_tail1 = as.matrix(f_all_t[,2:5])
+
+#a1=matrix(nrow=nrow(stat_tail1),ncol= 2 )
+#for(i in (1:nrow(stat_tail1)))
+  
+#{
+ # for(j in (1:4))
+  #{
+  #a1[i,1]=(sum(shipcrd_tail1[i,j])-sum(stat_tail1[i,]))/sum(shipcrd_tail1[i,])*100
+  #a1[i,2]=(sum(shipcrd_tail1[i,])-sum(rfcst_tail1[i,]))/sum(shipcrd_tail1[i,])*100
+  #}
+#}
+#colnames(a1) <- c("StatTrade","RFcst")
+#a2=cbind(join1[,1],a1)
+#write.table(a2, file="WMAPE_AMS_NOV.csv", row.names = FALSE, sep="," )
+
+
+abs_er_stat = matrix(nrow=nrow(stat_tail1),ncol= h)
+abs_er_rfcst = matrix(nrow=nrow(stat_tail1),ncol=h)
+
+for(i in (1:nrow(stat_tail1)))
+      {
+        for (j in (1:h))
+           {
+    abs_er_stat[i,j] = abs(shipcrd_tail1[i,j] - stat_tail1[i,j])
+    abs_er_rfcst[i,j] = abs(shipcrd_tail1[i,j] - rfcst_tail1[i,j])
+    
+          }
+         }
+  
+wmape = matrix(nrow=nrow(stat_tail1),ncol= 2)
+
+
+for(i in (1: nrow(stat_tail1)))
+  
+{
+  
+  wmape[i,1] = (sum(abs_er_stat[i,])/sum(shipcrd_tail1[i,]))*100
+  wmape[i,2] = (sum(abs_er_rfcst[i,])/sum(shipcrd_tail1[i,]))*100
+  
+}
+ 
+a2=cbind(join1[,1],wmape)
+write.table(a2, file="WMAPE_AMS_NOV.csv", row.names = FALSE, sep="," )
+
+  
